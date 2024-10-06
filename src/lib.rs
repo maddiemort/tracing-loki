@@ -81,9 +81,6 @@ use tracing_subscriber::layer::Context as TracingContext;
 use tracing_subscriber::registry::LookupSpan;
 use url::Url;
 
-#[cfg(feature = "span-id")]
-use opentelemetry::trace::SpanId;
-
 use ErrorInner as ErrorI;
 
 use labels::FormattedLabels;
@@ -253,8 +250,6 @@ struct SerializedEvent<'a> {
     _line: Option<u32>,
     #[cfg(feature = "trace-id")]
     trace_id: Option<String>,
-    #[cfg(feature = "span-id")]
-    span_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -368,16 +363,6 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> tracing_subscriber::Layer<S> for La
                         }
                     }
                     maybe_trace_id
-                },
-                #[cfg(feature = "span-id")]
-                span_id: {
-                    if let Some(span) = ctx.lookup_current() {
-                        span.extensions()
-                            .get::<tracing_opentelemetry::OtelData>()
-                            .map(|data| data.builder.span_id.unwrap_or(SpanId::INVALID).to_string())
-                    } else {
-                        None
-                    }
                 },
             })
             .expect("json serialization shouldn't fail"),

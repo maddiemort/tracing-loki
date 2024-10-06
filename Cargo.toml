@@ -37,7 +37,6 @@ tokio = { version = "1.17.0", features = ["macros", "rt-multi-thread"] }
 [features]
 default = ["compat-0-2-1", "native-tls"]
 compat-0-2-1 = []
-span-id = ["dep:opentelemetry", "dep:tracing-opentelemetry"]
 trace-id = ["dep:opentelemetry", "dep:tracing-opentelemetry"]
 
 native-tls = ["reqwest/native-tls"]
