@@ -248,8 +248,6 @@ struct SerializedEvent<'a> {
     _module_path: Option<&'a str>,
     _file: Option<&'a str>,
     _line: Option<u32>,
-    #[cfg(feature = "trace-id")]
-    trace_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -331,6 +329,30 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> tracing_subscriber::Layer<S> for La
                 })
             })
             .unwrap_or(Vec::new());
+
+        #[cfg(feature = "trace-id")]
+        {
+            if !span_fields.contains_key("trace_id") {
+                let mut maybe_span = ctx.lookup_current();
+                let mut maybe_trace_id = None;
+                while let Some(span) = maybe_span {
+                    let exts = span.extensions();
+                    if let Some(data) = exts.get::<tracing_opentelemetry::OtelData>() {
+                        if let Some(trace_id) = data.builder.trace_id {
+                            maybe_trace_id = Some(trace_id.to_string());
+                        }
+                        maybe_span = span.parent();
+                    } else {
+                        break;
+                    }
+                }
+
+                if let Some(trace_id) = maybe_trace_id {
+                    span_fields.insert("trace_id".into(), serde_json::Value::String(trace_id));
+                }
+            }
+        }
+
         // TODO: Anything useful to do when the capacity has been reached?
         let _ = self.sender.try_send(LokiEvent {
             trigger_send: !meta.target().starts_with("tracing_loki"),
@@ -345,25 +367,6 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> tracing_subscriber::Layer<S> for La
                 _module_path: meta.module_path(),
                 _file: meta.file(),
                 _line: meta.line(),
-                #[cfg(feature = "trace-id")]
-                trace_id: {
-                    let mut maybe_span = ctx.lookup_current();
-                    let mut maybe_trace_id = None;
-                    while let Some(span) = maybe_span {
-                        let exts = span.extensions();
-                        if let Some(data) = exts.get::<tracing_opentelemetry::OtelData>() {
-                            if let Some(trace_id) = data.builder.trace_id {
-                                maybe_trace_id = Some(trace_id.to_string());
-                                break;
-                            } else {
-                                maybe_span = span.parent();
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                    maybe_trace_id
-                },
             })
             .expect("json serialization shouldn't fail"),
         });
