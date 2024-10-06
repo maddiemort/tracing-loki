@@ -81,14 +81,18 @@ use tracing_subscriber::layer::Context as TracingContext;
 use tracing_subscriber::registry::LookupSpan;
 use url::Url;
 
+#[cfg(feature = "span-id")]
+use opentelemetry::trace::SpanId;
+
 use ErrorInner as ErrorI;
+
 use labels::FormattedLabels;
 use level_map::LevelMap;
 use log_support::SerializeEventFieldMapStrippingLog;
 use no_subscriber::NoSubscriber;
 
-pub use builder::Builder;
 pub use builder::builder;
+pub use builder::Builder;
 
 mod builder;
 mod labels;
@@ -143,8 +147,9 @@ impl fmt::Display for ErrorInner {
             DuplicateLabel(key) => write!(f, "duplicate label key {:?}", key),
             InvalidHttpHeaderName(name) => write!(f, "invalid HTTP header name {:?}", name),
             InvalidHttpHeaderValue(name) => write!(f, "invalid HTTP header value for {:?}", name),
-            InvalidLabelCharacter(key, c) =>
-                write!(f, "invalid label character {:?} in key {:?}", c, key),
+            InvalidLabelCharacter(key, c) => {
+                write!(f, "invalid label character {:?} in key {:?}", c, key)
+            }
             InvalidLokiUrl => write!(f, "invalid Loki URL"),
             ReservedLabelLevel => write!(f, "cannot add custom label for \"level\""),
         }
@@ -211,7 +216,11 @@ pub fn layer(
     for (key, value) in extra_fields {
         builder = builder.extra_field(key, value)?;
     }
-    builder.build_url(loki_url.join("/").map_err(|_| Error(ErrorI::InvalidLokiUrl))?)
+    builder.build_url(
+        loki_url
+            .join("/")
+            .map_err(|_| Error(ErrorI::InvalidLokiUrl))?,
+    )
 }
 
 /// The [`tracing_subscriber::Layer`] implementation for the Loki backend.
@@ -242,6 +251,10 @@ struct SerializedEvent<'a> {
     _module_path: Option<&'a str>,
     _file: Option<&'a str>,
     _line: Option<u32>,
+    #[cfg(feature = "trace-id")]
+    trace_id: Option<String>,
+    #[cfg(feature = "span-id")]
+    span_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -337,6 +350,35 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> tracing_subscriber::Layer<S> for La
                 _module_path: meta.module_path(),
                 _file: meta.file(),
                 _line: meta.line(),
+                #[cfg(feature = "trace-id")]
+                trace_id: {
+                    let mut maybe_span = ctx.lookup_current();
+                    let mut maybe_trace_id = None;
+                    while let Some(span) = maybe_span {
+                        let exts = span.extensions();
+                        if let Some(data) = exts.get::<tracing_opentelemetry::OtelData>() {
+                            if let Some(trace_id) = data.builder.trace_id {
+                                maybe_trace_id = Some(trace_id.to_string());
+                                break;
+                            } else {
+                                maybe_span = span.parent();
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    maybe_trace_id
+                },
+                #[cfg(feature = "span-id")]
+                span_id: {
+                    if let Some(span) = ctx.lookup_current() {
+                        span.extensions()
+                            .get::<tracing_opentelemetry::OtelData>()
+                            .map(|data| data.builder.span_id.unwrap_or(SpanId::INVALID).to_string())
+                    } else {
+                        None
+                    }
+                },
             })
             .expect("json serialization shouldn't fail"),
         });
